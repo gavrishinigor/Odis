@@ -6,6 +6,8 @@ import { brainReady, REASON_TEXT } from './core/brain.js';
 import { Recorder, transcribe, voiceSupported, micErrorText } from './voice.js';
 import { h, svg, ICONS, confirmBox, snackbar, hideSnack, status, safeStorage, plural } from './ui.js';
 import { openSettings } from './settings.js';
+import { applyLook } from './theme.js';
+import { loadBg, applyBg } from './bg.js';
 
 const storage = safeStorage();
 const UI_KEY = 'odis.ui.v1';
@@ -67,11 +69,20 @@ function render() {
   $('topDate').textContent = long.charAt(0).toUpperCase() + long.slice(1);
   $('topTitle').textContent = { today: 'Сегодня', soon: 'Скоро', done: 'Готово' }[app.view];
 
+  // плитки: «Сделано сегодня» и «Скоро»
   const total = open.length + doneToday.length;
-  $('ringFg').style.strokeDashoffset = String(total ? 100 - (doneToday.length / total) * 100 : 100);
-  $('ringFg').style.opacity = doneToday.length ? '1' : '0';
-  $('ringText').textContent = `${doneToday.length}/${total}`;
-  $('ring').setAttribute('aria-label', `Сделано сегодня ${doneToday.length} из ${total}`);
+  const carried = open.filter((x) => x.carried > 0).length;
+  $('tileTodayN').textContent = `${doneToday.length}/${total}`;
+  const rowT = $('tileTodayRow');
+  rowT.textContent = carried ? `Перенос: ${carried}` : total && doneToday.length === total ? 'Всё сделано' : `Осталось: ${open.length}`;
+  rowT.classList.toggle('warn', carried > 0);
+  $('tileToday').setAttribute('aria-label', `Сделано сегодня ${doneToday.length} из ${total}. Открыть «Сегодня»`);
+  $('tileSoonN').textContent = String(soonCount);
+  $('tileSoonRow').textContent = soon.length ? `Ближайшая: ${formatRelative(soon[0].date, t).toLowerCase()}` : 'Ничего не запланировано';
+  $('tileSoon').setAttribute('aria-label', `Скоро задач: ${soonCount}. Открыть «Скоро»`);
+  for (const b of document.querySelectorAll('.nav-btn')) {
+    if (b.dataset.nav === app.view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+  }
 
   for (const tab of document.querySelectorAll('.tab')) {
     const v = tab.dataset.view;
@@ -92,7 +103,7 @@ function renderToday(open, doneToday, t) {
   const box = $('view-today');
   const parts = [];
   if (!isStandalone() && !uiPrefs().installHidden) {
-    parts.push(h('div.banner', {},
+    parts.push(h('div.banner.glass', {},
       h('p', {}, 'Добавьте ODIS на экран «Домой»: кнопка «Поделиться» в Safari → «На экран „Домой“». Так данные надёжнее хранятся и приложение открывается без адресной строки.'),
       h('button', { type: 'button', onclick: () => { setUiPref('installHidden', true); render(); } }, 'Скрыть')));
   }
@@ -137,7 +148,7 @@ function renderDone(doneToday, t) {
 }
 
 function emptyState([title, text]) {
-  return h('div.empty', {},
+  return h('div.empty.glass', {},
     h('div.empty-ico', { html: ICONS.check }),
     h('h3', {}, title),
     h('p', {}, text));
@@ -157,7 +168,7 @@ function card(task, t) {
   if (!task.done && task.carried > 0) meta.push(chip('back', `перенесено ${task.carried} ${plural(task.carried, 'день', 'дня', 'дней')}`, 'warn'));
   if (task.draft) meta.push(chip('pen', 'черновик — проверьте', 'draft'));
 
-  const li = h('li.card', { dataset: { id: task.id } });
+  const li = h('li.card.glass', { dataset: { id: task.id } });
   if (task.done) li.classList.add('done');
   const check = h('button.check', {
     type: 'button',
@@ -238,9 +249,12 @@ $('sheetDelete').addEventListener('click', () => {
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
 
-// ---------- вкладки ----------
-for (const tab of document.querySelectorAll('.tab')) {
-  tab.addEventListener('click', () => { app.view = tab.dataset.view; render(); window.scrollTo({ top: 0 }); });
+// ---------- вкладки, плитки, нижнее меню ----------
+function go(view) { app.view = view; render(); window.scrollTo({ top: 0 }); }
+for (const tab of document.querySelectorAll('.tab')) tab.addEventListener('click', () => go(tab.dataset.view));
+for (const tile of document.querySelectorAll('.tile')) tile.addEventListener('click', () => go(tile.dataset.go));
+for (const b of document.querySelectorAll('.nav-btn')) {
+  if (b.dataset.nav !== 'settings') b.addEventListener('click', () => go(b.dataset.nav));
 }
 
 // ---------- ввод текста и голос ----------
@@ -380,7 +394,9 @@ window.addEventListener('storage', (e) => {
 });
 
 async function boot() {
+  applyLook(app.state.settings.look);
   checkDay();
+  if (app.state.settings.look.hasBg) applyBg(await loadBg());
   if (storage.volatile) status('Хранилище недоступно (приватный режим?) — задачи не сохранятся', { error: true, ms: 8000 });
   try {
     if (navigator.storage?.persist && !(await navigator.storage.persisted())) await navigator.storage.persist();

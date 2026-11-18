@@ -110,3 +110,18 @@ test('изменение и удаление', () => {
   assert.equal(removeTask(s, t.id), true);
   assert.equal(s.tasks.length, 0);
 });
+
+test('оформление: значения по умолчанию, починка мусора, старые копии без look', async () => {
+  const { normalizeLook, DEFAULT_LOOK } = await import('../js/core/store.js');
+  assert.deepEqual(migrate({}).settings.look, DEFAULT_LOOK);
+  assert.equal(migrate({}).settings.look.accent, 'cappuccino');
+  assert.equal(migrate({}).settings.look.theme, 'auto');
+  const l = normalizeLook({ theme: 'neon', accent: 'cola', glass: 500, blur: -3, rain: 0, extra: 1 });
+  assert.equal(l.theme, 'auto');
+  assert.equal(l.accent, 'cappuccino');
+  assert.equal(l.glass, 95);
+  assert.equal(l.blur, 0);
+  assert.equal(l.rain, false);
+  assert.equal(l.extra, 1); // незнакомое не удаляем
+  assert.equal(migrate({ settings: { look: { theme: 'dark', accent: 'mocha' } } }).settings.look.accent, 'mocha');
+});

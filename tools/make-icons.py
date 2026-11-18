@@ -4,8 +4,8 @@
 import math, os, struct, zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-C1 = (0x4F, 0x6B, 0xFF)  # синий
-C2 = (0x8B, 0x5C, 0xF6)  # фиолетовый
+C1 = (0x9A, 0x66, 0x44)  # капучино
+C2 = (0x3E, 0x26, 0x19)  # эспрессо
 WHITE = (255, 255, 255)
 OK = (0x7C, 0xF2, 0xB0)   # мягкий зелёный для галочки
 

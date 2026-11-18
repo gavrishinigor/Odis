@@ -20,6 +20,30 @@ export const DEFAULT_SETTINGS = {
   },
 };
 
+// Оформление: тема, цвет кнопок, стекло плашек, капли дождя. Фото фона хранится отдельно (IndexedDB).
+export const ACCENTS = {
+  cappuccino: { name: 'Капучино', dark: '#96623f', light: '#7a4f34' },
+  espresso: { name: 'Эспрессо', dark: '#5b3826', light: '#4e3022' },
+  mocha: { name: 'Мокко', dark: '#8a5638', light: '#6e4129' },
+  latte: { name: 'Латте', dark: '#c9a07a', light: '#c9a07a' },
+  caramel: { name: 'Карамель', dark: '#c4813f', light: '#9c5f24' },
+};
+export const THEMES = ['auto', 'light', 'dark'];
+export const DEFAULT_LOOK = { theme: 'auto', accent: 'cappuccino', glass: 70, blur: 16, rain: true, hasBg: false };
+DEFAULT_SETTINGS.look = { ...DEFAULT_LOOK };
+
+const clampNum = (v, lo, hi, def) => (Number.isFinite(+v) && v !== null && v !== '' ? Math.min(hi, Math.max(lo, Math.round(+v))) : def);
+export function normalizeLook(raw) {
+  const l = { ...DEFAULT_LOOK, ...(raw && typeof raw === 'object' ? raw : {}) };
+  if (!THEMES.includes(l.theme)) l.theme = DEFAULT_LOOK.theme;
+  if (!(l.accent in ACCENTS)) l.accent = DEFAULT_LOOK.accent;
+  l.glass = clampNum(l.glass, 20, 95, DEFAULT_LOOK.glass);
+  l.blur = clampNum(l.blur, 0, 40, DEFAULT_LOOK.blur);
+  l.rain = Boolean(l.rain);
+  l.hasBg = Boolean(l.hasBg);
+  return l;
+}
+
 // Адрес из черновика чата — по документации ProxyAPI не подтвердился.
 const OLD_URLS = ['https://openai.api.proxyapi.ru/v1'];
 
@@ -71,7 +95,7 @@ export function migrate(raw) {
   brain.consent = Boolean(brain.consent);
   for (const k of ['chatModels', 'transcribeModels']) brain[k] = Array.isArray(brain[k]) ? brain[k].filter((x) => typeof x === 'string').slice(0, 500) : [];
   for (const k of ['baseUrl', 'model', 'transcribeModel']) if (typeof brain[k] !== 'string') brain[k] = DEFAULT_SETTINGS.brain[k];
-  base.settings = { ...rawSettings, brain };
+  base.settings = { ...rawSettings, brain, look: normalizeLook(rawSettings.look) };
   base.lastDay = isISO(raw.lastDay) ? raw.lastDay : null;
   return base;
 }
