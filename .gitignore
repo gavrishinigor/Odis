@@ -1,0 +1,11 @@
+.DS_Store
+node_modules/
+_site/
+.env
+*.key
+# личное и служебное — не для публичного репозитория
+CLAUDE.md
+.claude/
+_draft-chat/
+# резервные копии задач
+odis-*.json
