@@ -48,3 +48,12 @@ test('в коде нет ключей и токенов', () => {
     ...readdirSync(join(ROOT, 'js/core')).map((f) => `js/core/${f}`)];
   for (const f of files) assert.doesNotMatch(read(f), /sk-[A-Za-z0-9_-]{16,}/, `похоже на ключ в ${f}`);
 });
+
+test('все js-файлы приложения синтаксически корректны (модули для браузера)', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const walk = (d) => readdirSync(join(ROOT, d)).flatMap((f) => (statSync(join(ROOT, d, f)).isDirectory() ? walk(`${d}/${f}`) : [`${d}/${f}`]));
+  for (const f of [...walk('js'), 'sw.js']) {
+    try { execFileSync(process.execPath, ['--check', join(ROOT, f)], { stdio: 'pipe' }); }
+    catch (e) { assert.fail(`${f}: ${String(e.stderr).split('\n').slice(0, 5).join(' ')}`); }
+  }
+});

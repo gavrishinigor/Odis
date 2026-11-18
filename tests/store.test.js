@@ -66,7 +66,12 @@ test('миграция: ИИ выключен по умолчанию, незн�
   assert.equal(m.tasks[0].newField, 5);
   assert.equal(m.settings.brain.baseUrl, 'https://api.proxyapi.ru/v1');
   assert.equal(migrate(null).settings.brain.enabled, false);
-  assert.equal(migrate({}).settings.brain.model, 'openai/gpt-5-mini');
+  assert.equal(migrate({}).settings.brain.model, 'openai/gpt-4o-mini');
+  // старый «по умолчанию» без ручного выбора → новый; ручной выбор не трогаем
+  assert.equal(migrate({ settings: { brain: { model: 'openai/gpt-5-mini' } } }).settings.brain.model, 'openai/gpt-4o-mini');
+  assert.equal(migrate({ settings: { brain: { model: 'openai/gpt-5-mini', modelChosen: true } } }).settings.brain.model, 'openai/gpt-5-mini');
+  assert.equal(migrate({ settings: { brain: { model: 'google/gemini-2.5-flash' } } }).settings.brain.model, 'google/gemini-2.5-flash');
+  assert.equal(migrate({ settings: { brain: { model: 'google/gemini-2.5-flash' } } }).settings.brain.modelChosen, true);
 });
 
 test('дубли id при импорте получают новые id', () => {

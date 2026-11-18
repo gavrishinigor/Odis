@@ -1,6 +1,7 @@
 // Состояние приложения: задачи, настройки, автоперенос. Хранилище внедряется (localStorage или заглушка).
 import { addDays, diffDays, isISO, isValidTime, toISO } from './dates.js';
 import { findTask } from './rules.js';
+import { DEFAULT_GCAL, normalizeGcal } from './gcal.js';
 
 export const STATE_KEY = 'odis.state.v1';
 export const SECRET_KEY = 'odis.secrets.v1';
@@ -12,7 +13,8 @@ export const DEFAULT_SETTINGS = {
     consent: false, // согласие на отправку текста/голоса провайдеру
     provider: 'proxyapi', // 'proxyapi' | 'custom'
     baseUrl: 'https://api.proxyapi.ru/v1',
-    model: 'openai/gpt-5-mini',
+    model: 'openai/gpt-4o-mini', // выбор Игоря по цене (ProxyAPI, 2026-11-18)
+    modelChosen: false, // true — модель выбрана вручную, миграции её не трогают
     transcribeModel: 'openai/gpt-4o-mini-transcribe',
     chatModels: [], // список, полученный от провайдера (GET /models)
     transcribeModels: [],
@@ -31,6 +33,7 @@ export const ACCENTS = {
 export const THEMES = ['auto', 'light', 'dark'];
 export const DEFAULT_LOOK = { theme: 'auto', accent: 'cappuccino', glass: 70, blur: 16, rain: true, hasBg: false };
 DEFAULT_SETTINGS.look = { ...DEFAULT_LOOK };
+DEFAULT_SETTINGS.gcal = { ...DEFAULT_GCAL };
 
 const clampNum = (v, lo, hi, def) => (Number.isFinite(+v) && v !== null && v !== '' ? Math.min(hi, Math.max(lo, Math.round(+v))) : def);
 export function normalizeLook(raw) {
@@ -46,9 +49,11 @@ export function normalizeLook(raw) {
 
 // Адрес из черновика чата — по документации ProxyAPI не подтвердился.
 const OLD_URLS = ['https://openai.api.proxyapi.ru/v1'];
+// Модели по умолчанию прошлых версий (0.1–0.2).
+const OLD_DEFAULT_MODELS = ['openai/gpt-5-mini'];
 
 export function emptyState() {
-  return { v: 1, tasks: [], settings: structuredClone(DEFAULT_SETTINGS), lastDay: null };
+  return { v: 1, tasks: [], settings: structuredClone(DEFAULT_SETTINGS), lastDay: null, calDeletes: [] };
 }
 
 let counter = 0;
@@ -81,7 +86,8 @@ export function migrate(raw) {
       carried: Number.isFinite(t.carried) ? t.carried : 0,
       source: t.source || 'manual',
       draft: Boolean(t.draft),
-      calendarEventId: t.calendarEventId || null,
+      calendarEventId: typeof t.calendarEventId === 'string' && t.calendarEventId ? t.calendarEventId : null,
+      calSig: typeof t.calSig === 'string' ? t.calSig : null,
       sheetRef: t.sheetRef || null,
     }));
   const seen = new Set();
@@ -90,12 +96,17 @@ export function migrate(raw) {
   const b = rawSettings.brain && typeof rawSettings.brain === 'object' ? rawSettings.brain : {};
   const brain = { ...structuredClone(DEFAULT_SETTINGS.brain), ...b };
   if (OLD_URLS.includes(brain.baseUrl)) brain.baseUrl = DEFAULT_SETTINGS.brain.baseUrl;
+  // Старое значение по умолчанию меняем на новое, только если модель не выбирали руками.
+  if (!('modelChosen' in b)) brain.modelChosen = typeof b.model === 'string' && !OLD_DEFAULT_MODELS.includes(b.model);
+  if (!brain.modelChosen && OLD_DEFAULT_MODELS.includes(brain.model)) brain.model = DEFAULT_SETTINGS.brain.model;
+  brain.modelChosen = Boolean(brain.modelChosen);
   if (!['proxyapi', 'custom'].includes(brain.provider)) brain.provider = 'proxyapi';
   brain.enabled = Boolean(brain.enabled);
   brain.consent = Boolean(brain.consent);
   for (const k of ['chatModels', 'transcribeModels']) brain[k] = Array.isArray(brain[k]) ? brain[k].filter((x) => typeof x === 'string').slice(0, 500) : [];
   for (const k of ['baseUrl', 'model', 'transcribeModel']) if (typeof brain[k] !== 'string') brain[k] = DEFAULT_SETTINGS.brain[k];
-  base.settings = { ...rawSettings, brain, look: normalizeLook(rawSettings.look) };
+  base.settings = { ...rawSettings, brain, look: normalizeLook(rawSettings.look), gcal: normalizeGcal(rawSettings.gcal) };
+  base.calDeletes = Array.isArray(raw.calDeletes) ? raw.calDeletes.filter((x) => typeof x === 'string') : [];
   base.lastDay = isISO(raw.lastDay) ? raw.lastDay : null;
   return base;
 }
@@ -165,6 +176,7 @@ export function addTask(state, fields, now = new Date()) {
     source: fields.source || 'manual',
     draft: Boolean(fields.draft),
     calendarEventId: null,
+    calSig: null,
     sheetRef: null,
   };
   state.tasks.push(task);
@@ -194,7 +206,9 @@ export function updateTask(state, id, patch) {
 export function removeTask(state, id) {
   const i = state.tasks.findIndex((x) => x.id === id);
   if (i < 0) return false;
-  state.tasks.splice(i, 1);
+  const [gone] = state.tasks.splice(i, 1);
+  // событие в Календаре удалим при следующей синхронизации
+  if (gone.calendarEventId) (state.calDeletes ||= []).push(gone.calendarEventId);
   return true;
 }
 

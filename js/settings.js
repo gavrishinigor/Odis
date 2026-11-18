@@ -1,12 +1,16 @@
 // Настройки: «Мозг (ИИ)», резервная копия, хранилище, о приложении.
 import * as S from './core/store.js';
 import { ACCENTS } from './core/store.js';
-import { PROVIDERS, MODEL_HINTS, TRANSCRIBE_HINTS, listModels, pingBrain } from './core/brain.js';
+import { PROVIDERS, MODEL_HINTS, TRANSCRIBE_HINTS, listModels, pingBrain, modelLabel } from './core/brain.js';
 import { h, ICONS, confirmBox, snackbar } from './ui.js';
 import { APP_VERSION } from './version.js';
 import { howtoNodes } from './howto.js';
 import { applyLook } from './theme.js';
 import { saveBg, deleteBg, loadBg, compressImage, applyBg } from './bg.js';
+import { looksLikeClientId, REMIND_OPTIONS, ALLDAY_OPTIONS } from './core/gcal.js';
+import { prepare, ready, signIn, signOut, getToken, tokenExpiresAt } from './google.js';
+import { runSync, reauth, calStatus, onCalChange } from './calsync.js';
+import { calendarHowto } from './howto.js';
 
 const $ = (id) => document.getElementById(id);
 let ctx = null;
@@ -40,6 +44,7 @@ const PAGES = {
   main: { title: 'Настройки', back: 'Готово', build: () => mainPage() },
   brain: { title: 'Мозг (ИИ)', back: 'Назад', build: () => brainPage() },
   look: { title: 'Оформление', back: 'Назад', build: () => lookPage() },
+  gcal: { title: 'Google Календарь', back: 'Назад', build: () => gcalPage() },
 };
 function draw() {
   const p = PAGES[page] || PAGES.main;
@@ -64,6 +69,13 @@ function mainPage() {
       h('button.row', { type: 'button', onclick: () => { page = 'look'; draw(); } },
         h('span.grow', {}, 'Оформление', h('span.sub', {}, 'Тема, цвет кнопок, плашки, фон')),
         h('span.val', {}, `${themeName} · ${ACCENTS[look.accent].name}`),
+        h('span', { html: ICONS.chev }))),
+
+    h('h3.sect-title', {}, 'Календарь'),
+    h('div.group.glass', {},
+      h('button.row', { type: 'button', onclick: () => { page = 'gcal'; draw(); } },
+        h('span.grow', {}, 'Google Календарь', h('span.sub', {}, 'Задачи — событиями с напоминанием на iPhone')),
+        h('span.val', {}, ctx.state.settings.gcal.enabled ? 'Вкл' : 'Выкл'),
         h('span', { html: ICONS.chev }))),
 
     h('h3.sect-title', {}, 'Помощник'),
@@ -230,7 +242,7 @@ function brainPage() {
   out.push(h('h3.sect-title', {}, 'Модели'));
   out.push(h('div.group.glass', {},
     modelPicker('Модель для текста', 'model', b.chatModels, MODEL_HINTS,
-      'По умолчанию openai/gpt-5-mini — в документации ProxyAPI названа недорогой и быстрой. Цены смотрите в кабинете.'),
+      'По умолчанию openai/gpt-4o-mini — недорогая. Пометки «дешевле/дороже» — относительно неё; точные цены смотрите в кабинете ProxyAPI.'),
     modelPicker('Модель для голоса (расшифровка)', 'transcribeModel', b.transcribeModels, TRANSCRIBE_HINTS,
       'Расшифровка у ProxyAPI есть (/audio/transcriptions). Если голос не заработает — диктуйте клавиатурой iPhone: поле ввода → значок микрофона.'),
     h('div.block', {},
@@ -266,19 +278,21 @@ function modelPicker(label, key, list, hints, help) {
   const b = brain();
   const options = [...new Set([...(list.length ? list : hints), b[key]].filter(Boolean))];
   const sel = h('select.input', { 'aria-label': label },
-    options.map((m) => h('option', { value: m, selected: m === b[key] }, m)),
+    options.map((m) => h('option', { value: m, selected: m === b[key] }, modelLabel(m))),
     h('option', { value: '__manual' }, 'Ввести вручную…'));
-  const manual = h('input.input', { type: 'text', placeholder: 'вендор/модель, например openai/gpt-5-mini', autocapitalize: 'off', spellcheck: 'false', hidden: true, 'aria-label': `${label} вручную` });
+  const manual = h('input.input', { type: 'text', placeholder: 'вендор/модель, например openai/gpt-4o-mini', autocapitalize: 'off', spellcheck: 'false', hidden: true, 'aria-label': `${label} вручную` });
   sel.addEventListener('change', () => {
     if (sel.value === '__manual') { manual.hidden = false; manual.value = b[key]; manual.focus(); return; }
     manual.hidden = true;
     b[key] = sel.value;
+    if (key === 'model') b.modelChosen = true;
     save();
   });
   manual.addEventListener('change', () => {
     const v = manual.value.trim();
     if (!v) return;
     b[key] = v;
+    if (key === 'model') b.modelChosen = true;
     save();
     draw();
   });
@@ -295,7 +309,7 @@ async function refreshModels({ quiet }) {
     b.transcribeModels = r.transcribe;
     b.modelsFetchedAt = new Date().toISOString();
     if (r.chat.length && !r.chat.includes(b.model)) {
-      b.model = r.chat.find((m) => /gpt-5-mini|gemini-2\.5-flash|haiku/i.test(m)) || b.model;
+      b.model = r.chat.find((m) => m === 'openai/gpt-4o-mini') || r.chat.find((m) => /gpt-4o-mini|gpt-5-nano/i.test(m)) || b.model;
     }
     save();
     modelsMsg = { ok: true, text: `Моделей для текста: ${r.chat.length}, для голоса: ${r.transcribe.length}` };
@@ -392,4 +406,109 @@ function pickBg(btn) {
     }
   });
   inp.click();
+}
+
+// ---------- «Google Календарь» ----------
+onCalChange(() => { if (page === 'gcal' && !$('settings').hidden) draw(); });
+
+function gcalPage() {
+  const g = ctx.state.settings.gcal;
+  const out = [];
+  const st = calStatus();
+  const token = getToken();
+  if (g.clientId && !ready(g.clientId)) prepare(g.clientId).then(() => { if (page === 'gcal') draw(); }).catch(() => {});
+
+  // Состояние
+  let stateText;
+  if (!g.clientId) stateText = 'Не настроен: нужен Client ID (инструкция ниже).';
+  else if (!g.enabled) stateText = 'Выключен. Нажмите «Подключить Календарь».';
+  else if (!token) stateText = `Нужен вход в Google. Ждут отправки: ${st.pending}.`;
+  else {
+    const until = new Date(tokenExpiresAt() + 60000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    stateText = `Подключён. Вход действует до ${until}. Ждут отправки: ${st.pending}.`;
+  }
+  const busy = g.clientId && !ready(g.clientId);
+  const plate = h(`div.plate.${st.lastError ? 'bad' : g.enabled && token ? 'ok' : 'info'}`, {}, st.lastError || stateText);
+  const actions = [];
+  if (g.clientId && !g.enabled) {
+    actions.push(h('button.btn.primary', { type: 'button', disabled: busy, onclick: connect }, busy ? 'Загружаю вход Google…' : 'Подключить Календарь'));
+  } else if (g.enabled) {
+    if (!token) actions.push(h('button.btn.primary', { type: 'button', disabled: busy, onclick: () => reauth().then(done, fail) }, busy ? 'Загружаю…' : 'Войти снова'));
+    else actions.push(h('button.btn.primary', { type: 'button', onclick: () => runSync().then(done, fail) }, 'Синхронизировать сейчас'));
+    actions.push(h('button.btn.danger', { type: 'button', onclick: disconnect }, 'Отключить'));
+  }
+  out.push(h('div.group.glass', {}, h('div.block', {}, plate, actions.length ? h('div.btn-row', {}, actions) : null,
+    st.lastError && g.enabled ? h('p.help', {}, stateText) : null)));
+
+  // Client ID
+  out.push(h('h3.sect-title', {}, 'Client ID'));
+  const idInput = h('input.input', { type: 'text', value: g.clientId, placeholder: '…apps.googleusercontent.com', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Client ID' });
+  out.push(h('div.group.glass', {}, h('div.block', {},
+    idInput,
+    h('div.btn-row', {},
+      h('button.btn.small', { type: 'button', onclick: async () => { try { idInput.value = (await navigator.clipboard.readText()).trim(); } catch { idInput.focus(); } } }, 'Вставить'),
+      h('button.btn.small.primary', { type: 'button', onclick: async () => {
+        const v = idInput.value.trim();
+        if (v && !looksLikeClientId(v) && !(await confirmBox({ title: 'Похоже, это не Client ID', text: 'Client ID заканчивается на .apps.googleusercontent.com. Сохранить всё равно?', ok: 'Сохранить' }))) return;
+        if (v !== g.clientId) { g.enabled = false; await signOut().catch(() => {}); }
+        g.clientId = v;
+        save();
+        draw();
+        if (v) prepare(v).then(() => draw()).catch((e) => snackbar(e.message));
+      } }, 'Сохранить')),
+    h('p.help', {}, 'Client ID не секретный, но хранится только здесь, в настройках. Адрес приложения для Google: ', h('b', {}, location.origin)))));
+
+  // Напоминания
+  out.push(h('h3.sect-title', {}, 'Напоминания'));
+  const sel = (opts, value, onChange, label) => {
+    const el = h('select.input', { 'aria-label': label }, opts.map(([v, name]) => h('option', { value: String(v), selected: v === value }, name)));
+    el.addEventListener('change', () => onChange(Number(el.value)));
+    return el;
+  };
+  const allDaySw = h('input', { type: 'checkbox', role: 'switch', checked: g.syncAllDay });
+  allDaySw.addEventListener('change', () => { g.syncAllDay = allDaySw.checked; save(); draw(); });
+  out.push(h('div.group.glass', {},
+    h('div.block', {}, h('span.lbl', {}, 'Задачи со временем'), sel(REMIND_OPTIONS, g.remindMin, (v) => { g.remindMin = v; save(); }, 'Напоминание для задач со временем')),
+    h('label.row', {}, h('span.grow', {}, 'Задачи без времени', h('span.sub', {}, 'Событием на весь день')), h('span.switch', {}, allDaySw, h('span.track'), h('span.knob'))),
+    g.syncAllDay ? h('div.block', {}, h('span.lbl', {}, 'Напоминание для задач без времени'), sel(ALLDAY_OPTIONS, g.allDayRemind, (v) => { g.allDayRemind = v; save(); }, 'Напоминание для задач без времени')) : null,
+    h('div.block', {}, h('p.help', {}, 'Уведомления на iPhone присылает приложение «Google Календарь»: оно должно быть установлено, вход — в тот же аккаунт, уведомления включены. Выполненная задача остаётся в Календаре с «✓» и без напоминания.'))));
+
+  // Инструкция
+  out.push(h('h3.sect-title', {}, 'Помощь'));
+  out.push(h('div.group.glass', {},
+    h('details.disclosure', {},
+      h('summary.row', {}, h('span.grow', {}, 'Как подключить Календарь'), h('span', { html: ICONS.chev })),
+      h('div.block.howto', {}, calendarHowto(location.origin)))));
+  return out;
+}
+
+const done = (r) => { if (r) snackbar(`Календарь: добавлено ${r.inserted}, обновлено ${r.patched}, удалено ${r.deleted}`); draw(); };
+const fail = (e) => { snackbar(e?.message || 'Не получилось'); draw(); };
+
+function connect() {
+  const g = ctx.state.settings.gcal;
+  // окно Google нужно открыть сразу по нажатию — поэтому согласие спрашиваем после входа
+  signIn('').then(async () => {
+    const ok = await confirmBox({
+      title: 'Отправлять задачи в Календарь?',
+      text: 'В ваш Google Календарь будут уходить название задачи, объект, дата и время. Список задач целиком и ключ ИИ не отправляются.\nОтключить можно здесь же.',
+      ok: 'Включить', cancel: 'Не сейчас',
+    });
+    if (!ok) { await signOut(); draw(); return; }
+    g.enabled = true;
+    save();
+    const r = await runSync();
+    done(r);
+  }, fail);
+}
+
+async function disconnect() {
+  const g = ctx.state.settings.gcal;
+  const ok = await confirmBox({ title: 'Отключить Календарь?', text: 'Уже созданные события останутся в Календаре. Новые изменения уходить перестанут, доступ приложения будет отозван.', ok: 'Отключить', danger: true });
+  if (!ok) return;
+  g.enabled = false;
+  save();
+  await signOut().catch(() => {});
+  draw();
+  snackbar('Календарь отключён');
 }

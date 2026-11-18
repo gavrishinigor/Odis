@@ -142,6 +142,6 @@ test('в запросе к ИИ нет temperature и есть tools', async () 
   const f = spyFetch(toolReply(['create_task', { title: 'А' }]));
   await askBrain({ settings: settings({ enabled: true, consent: true }), secrets: KEY, text: 'x', today: TODAY, fetchImpl: f });
   assert.equal('temperature' in f.calls[0].body, false);
-  assert.equal(f.calls[0].body.model, 'openai/gpt-5-mini');
+  assert.equal(f.calls[0].body.model, 'openai/gpt-4o-mini');
   assert.equal(f.calls[0].body.tools.length, 2);
 });

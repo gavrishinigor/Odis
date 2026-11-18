@@ -1,6 +1,6 @@
 // Service worker ODIS: кэш оболочки приложения для работы без сети.
 // Запросы к API (другие адреса) НЕ кэшируются и не трогаются.
-const VERSION = '0.2.0'; // держать равным js/version.js (проверяется тестом)
+const VERSION = '0.3.0'; // держать равным js/version.js (проверяется тестом)
 const CACHE = `odis-shell-${VERSION}`;
 const SHELL = [
   './',
@@ -15,6 +15,8 @@ const SHELL = [
   'js/version.js',
   'js/theme.js',
   'js/bg.js',
+  'js/google.js',
+  'js/calsync.js',
   'js/core/assistant.js',
   'js/core/brain.js',
   'js/core/dates.js',
@@ -22,6 +24,7 @@ const SHELL = [
   'js/core/store.js',
   'js/core/color.js',
   'js/core/image.js',
+  'js/core/gcal.js',
   'icons/icon-180.png',
   'icons/icon-192.png',
   'icons/icon-512.png',

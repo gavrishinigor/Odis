@@ -8,6 +8,7 @@ import { h, svg, ICONS, confirmBox, snackbar, hideSnack, status, safeStorage, pl
 import { openSettings } from './settings.js';
 import { applyLook } from './theme.js';
 import { loadBg, applyBg } from './bg.js';
+import { initCalSync, scheduleSync, runSync, reauth, calStatus, onCalChange } from './calsync.js';
 
 const storage = safeStorage();
 const UI_KEY = 'odis.ui.v1';
@@ -20,6 +21,11 @@ const app = {
   storage,
   today: () => toISO(new Date()),
   persist() {
+    app.saveQuiet();
+    scheduleSync();
+  },
+  // сохранить без запуска синхронизации (её собственные изменения)
+  saveQuiet() {
     if (!S.save(storage, app.state)) status('Не удалось сохранить на устройстве — память заполнена?', { error: true, ms: 6000 });
   },
   saveSecrets() { S.saveSecrets(storage, app.secrets); },
@@ -38,7 +44,11 @@ function setUiPref(k, v) {
 // ---------- отмена ----------
 const snapshot = () => JSON.stringify(app.state.tasks);
 function restore(snap) {
-  app.state.tasks = JSON.parse(snap);
+  const back = JSON.parse(snap);
+  // задачи, которых после отмены не будет, уже могли попасть в Календарь — их события удалим
+  const keep = new Set(back.map((x) => x.id));
+  for (const t of app.state.tasks) if (!keep.has(t.id) && t.calendarEventId) app.state.calDeletes.push(t.calendarEventId);
+  app.state.tasks = back;
   app.persist();
   render();
 }
@@ -102,6 +112,12 @@ function render() {
 function renderToday(open, doneToday, t) {
   const box = $('view-today');
   const parts = [];
+  const cal = calStatus();
+  if (cal.enabled && cal.authNeeded && cal.pending) {
+    parts.push(h('div.banner.glass', {},
+      h('p', {}, `Google Календарь: ${cal.pending} ${plural(cal.pending, 'изменение ждёт', 'изменения ждут', 'изменений ждут')} входа (вход живёт около часа).`),
+      h('button', { type: 'button', onclick: () => reauth().then(() => snackbar('Календарь обновлён')).catch((e) => status(e.message, { error: true, ms: 6000 })) }, 'Войти')));
+  }
   if (!isStandalone() && !uiPrefs().installHidden) {
     parts.push(h('div.banner.glass', {},
       h('p', {}, 'Добавьте ODIS на экран «Домой»: кнопка «Поделиться» в Safari → «На экран „Домой“». Так данные надёжнее хранятся и приложение открывается без адресной строки.'),
@@ -387,7 +403,8 @@ function isStandalone() {
   return window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 }
 
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkDay(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { checkDay(); scheduleSync(300); } });
+onCalChange(() => { if (app.view === 'today') render(); });
 window.addEventListener('pageshow', (e) => { if (e.persisted) checkDay(); });
 window.addEventListener('storage', (e) => {
   if (e.key === S.STATE_KEY) { app.state = S.load(storage); render(); }
@@ -395,8 +412,10 @@ window.addEventListener('storage', (e) => {
 
 async function boot() {
   applyLook(app.state.settings.look);
+  initCalSync(app);
   checkDay();
   if (app.state.settings.look.hasBg) applyBg(await loadBg());
+  runSync().catch(() => { /* ошибки покажет статус */ });
   if (storage.volatile) status('Хранилище недоступно (приватный режим?) — задачи не сохранятся', { error: true, ms: 8000 });
   try {
     if (navigator.storage?.persist && !(await navigator.storage.persisted())) await navigator.storage.persist();

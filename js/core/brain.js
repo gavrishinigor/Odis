@@ -10,9 +10,20 @@ export const PROVIDERS = {
   custom: { name: 'Свой адрес', baseUrl: '' },
 };
 
-// Подсказки, если список моделей не получен (названия из документации ProxyAPI, цены — в кабинете).
-export const MODEL_HINTS = ['openai/gpt-5-mini', 'google/gemini-2.5-flash', 'anthropic/claude-haiku-4-5'];
+// Подсказки, если список моделей не получен. Цены в код не пишем — только «дешевле/дороже»
+// относительно модели по умолчанию (по страницам proxyapi.ru/models/*, 2026-11-18; точные цены — в кабинете).
+export const MODEL_HINTS = ['openai/gpt-4o-mini', 'openai/gpt-5-nano', 'openai/gpt-5-mini', 'anthropic/claude-haiku-4-5'];
 export const TRANSCRIBE_HINTS = ['openai/gpt-4o-mini-transcribe', 'openai/gpt-4o-transcribe'];
+export const PRICE_NOTES = {
+  'openai/gpt-4o-mini': 'по умолчанию',
+  'openai/gpt-5-nano': 'дешевле',
+  'openai/gpt-5-mini': 'дороже',
+  'anthropic/claude-haiku-4-5': 'намного дороже',
+  'openai/gpt-4o-mini-transcribe': 'дешевле',
+  'openai/gpt-4o-transcribe': 'дороже',
+  'openai/whisper-1': 'дороже',
+};
+export const modelLabel = (id) => (PRICE_NOTES[id] ? `${id} — ${PRICE_NOTES[id]}` : id);
 
 export const TOOLS = [
   {
